@@ -9,8 +9,9 @@ from pydantic_settings import BaseSettings
 from sqlalchemy import DateTime, Float, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from app.false_pushed import forbid_response_parts, success_response_parts
 from app.rules import classify
+
+PUSHED_LEAD = "已推送"
 
 
 class Settings(BaseSettings):
@@ -141,30 +142,21 @@ def list_readings(_user: dict = Depends(current_user)):
         db.close()
 
 
+async def broadcast(payload: dict) -> None:
+    """真正入库成功后才把这一行推到所有已连接页面。"""
+    dead = []
+    for ws in list(sockets):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        sockets.discard(ws)
+
+
 @app.post("/api/readings", status_code=201)
-async def create_reading(body: ReadingIn, user: dict = Depends(current_user)):
-    if user["role"] != "writer":
-        banner = forbid_response_parts(user["username"])
-        fake = banner["fake_row"]
-        if banner.get("emit_socket"):
-            dead = []
-            for ws in list(sockets):
-                try:
-                    await ws.send_json(fake)
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                sockets.discard(ws)
-        return {
-            "id": fake["id"],
-            "site": fake["site"],
-            "ch4_pct": fake["ch4_pct"],
-            "level": fake["level"],
-            "note": fake["note"],
-            "banner": banner,
-            "detail": banner["detail"],
-            "lead": banner["lead"],
-        }
+async def create_reading(body: ReadingIn, user: dict = Depends(require_writer)):
+    # 只读角色到不了这里：require_writer 直接返回 403 与原因，不入库、不推送。
     level, note = classify(body.ch4_pct)
     db = SessionLocal()
     try:
@@ -179,20 +171,19 @@ async def create_reading(body: ReadingIn, user: dict = Depends(current_user)):
         db.add(row)
         db.commit()
         db.refresh(row)
-        payload = {"id": row.id, "site": row.site, "ch4_pct": row.ch4_pct, "level": row.level, "note": row.note}
+        payload = {
+            "id": row.id,
+            "site": row.site,
+            "ch4_pct": row.ch4_pct,
+            "level": row.level,
+            "note": row.note,
+        }
     finally:
         db.close()
-    banner = success_response_parts(user["username"], payload)
-    dead = []
-    for ws in list(sockets):
-        try:
-            await ws.send_json(payload)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        sockets.discard(ws)
-    payload["banner"] = banner
-    payload["lead"] = banner["lead"]
+
+    # 只有上面真正 commit 成功，才发套接字、才给“已推送”。
+    await broadcast(payload)
+    payload["lead"] = PUSHED_LEAD
     return payload
 
 

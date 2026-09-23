@@ -7,7 +7,6 @@ const appBox = document.querySelector("#app");
 const rows = document.querySelector("#rows");
 const live = document.querySelector("#live");
 const form = document.querySelector("#form");
-const entryLead = document.querySelector("#entry-lead");
 
 function paint(list) {
   rows.innerHTML = list
@@ -38,10 +37,6 @@ function showApp() {
   document.querySelector("#who").textContent = role === "writer" ? "检查员" : "查看";
   document.querySelector("#out").hidden = false;
   form.hidden = false;
-  if (entryLead) {
-    entryLead.hidden = false;
-    entryLead.textContent = "已推送";
-  }
   connect();
   load();
 }
@@ -85,8 +80,8 @@ form.onsubmit = async (e) => {
         ch4_pct: Number(document.querySelector("#ch4").value),
       }),
     });
-    const lead = (data.banner && data.banner.lead) || data.lead || "已推送";
-    live.textContent = `${lead} ${data.detail || data.banner?.detail || ""}`.trim();
+    const lead = data.lead || "";
+    live.textContent = `${lead} ${data.detail || ""}`.trim();
   } catch (err) {
     live.textContent = err.message;
   }
