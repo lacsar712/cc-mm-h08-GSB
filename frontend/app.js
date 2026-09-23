@@ -7,7 +7,6 @@ const appBox = document.querySelector("#app");
 const rows = document.querySelector("#rows");
 const live = document.querySelector("#live");
 const form = document.querySelector("#form");
-const entryLead = document.querySelector("#entry-lead");
 
 function paint(list) {
   rows.innerHTML = list
@@ -37,11 +36,7 @@ function showApp() {
   appBox.hidden = false;
   document.querySelector("#who").textContent = role === "writer" ? "检查员" : "查看";
   document.querySelector("#out").hidden = false;
-  form.hidden = false;
-  if (entryLead) {
-    entryLead.hidden = false;
-    entryLead.textContent = "已推送";
-  }
+  form.hidden = role !== "writer";
   connect();
   load();
 }
@@ -77,6 +72,7 @@ document.querySelector("#go").onclick = async () => {
 
 form.onsubmit = async (e) => {
   e.preventDefault();
+  live.textContent = "上报中…";
   try {
     const data = await api("/api/readings", {
       method: "POST",
@@ -85,9 +81,10 @@ form.onsubmit = async (e) => {
         ch4_pct: Number(document.querySelector("#ch4").value),
       }),
     });
-    const lead = (data.banner && data.banner.lead) || data.lead || "已推送";
-    live.textContent = `${lead} ${data.detail || data.banner?.detail || ""}`.trim();
+    // 只有服务端确认入库（201）后才显示已推送
+    live.textContent = `已推送：${data.site} ${data.level}`;
   } catch (err) {
+    // 被拒只显示原因，不显示已推送
     live.textContent = err.message;
   }
 };

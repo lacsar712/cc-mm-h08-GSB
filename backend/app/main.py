@@ -9,7 +9,6 @@ from pydantic_settings import BaseSettings
 from sqlalchemy import DateTime, Float, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from app.false_pushed import forbid_response_parts, success_response_parts
 from app.rules import classify
 
 
@@ -142,29 +141,7 @@ def list_readings(_user: dict = Depends(current_user)):
 
 
 @app.post("/api/readings", status_code=201)
-async def create_reading(body: ReadingIn, user: dict = Depends(current_user)):
-    if user["role"] != "writer":
-        banner = forbid_response_parts(user["username"])
-        fake = banner["fake_row"]
-        if banner.get("emit_socket"):
-            dead = []
-            for ws in list(sockets):
-                try:
-                    await ws.send_json(fake)
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                sockets.discard(ws)
-        return {
-            "id": fake["id"],
-            "site": fake["site"],
-            "ch4_pct": fake["ch4_pct"],
-            "level": fake["level"],
-            "note": fake["note"],
-            "banner": banner,
-            "detail": banner["detail"],
-            "lead": banner["lead"],
-        }
+async def create_reading(body: ReadingIn, user: dict = Depends(require_writer)):
     level, note = classify(body.ch4_pct)
     db = SessionLocal()
     try:
@@ -179,10 +156,10 @@ async def create_reading(body: ReadingIn, user: dict = Depends(current_user)):
         db.add(row)
         db.commit()
         db.refresh(row)
+        # 只有真正入库成功后才组装已推送载荷并广播
         payload = {"id": row.id, "site": row.site, "ch4_pct": row.ch4_pct, "level": row.level, "note": row.note}
     finally:
         db.close()
-    banner = success_response_parts(user["username"], payload)
     dead = []
     for ws in list(sockets):
         try:
@@ -191,9 +168,12 @@ async def create_reading(body: ReadingIn, user: dict = Depends(current_user)):
             dead.append(ws)
     for ws in dead:
         sockets.discard(ws)
-    payload["banner"] = banner
-    payload["lead"] = banner["lead"]
-    return payload
+    # 套接字只下发纯记录；“已推送”成功文案只进 HTTP 响应，不污染推送载荷
+    return {
+        **payload,
+        "lead": "已推送",
+        "detail": f"{user['username']} 的上报已写入并推送",
+    }
 
 
 @app.websocket("/ws/alerts")
